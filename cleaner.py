@@ -23,8 +23,10 @@ RADARR_API_URL = (os.environ['RADARR_URL']) + "/api/v3"
 SONARR_API_KEY = (os.environ['SONARR_API_KEY'])
 RADARR_API_KEY = (os.environ['RADARR_API_KEY'])
 
+MESSAGES_TO_CHECK = ['Found potentially dangerous file', 'reporting an error', 'The download is stalled with no connections']
+
 # Timeout for API requests in seconds
-API_TIMEOUT = int(os.environ['API_TIMEOUT']) # 10 minutes
+API_TIMEOUT = int(float(os.environ['API_TIMEOUT'])) # 10 minutes
 
 # Function to make API requests with error handling
 async def make_api_request(url, api_key, params=None):
@@ -32,6 +34,8 @@ async def make_api_request(url, api_key, params=None):
         headers = {'X-Api-Key': api_key}
         response = await asyncio.get_event_loop().run_in_executor(None, lambda: requests.get(url, params=params, headers=headers))
         response.raise_for_status()
+        if response.headers.get('content-length') and int(response.headers['content-length']) == 0:
+            return {}
         return response.json()
     except RequestException as e:
         logging.error(f'Error making API request to {url}: {e}')
@@ -46,6 +50,7 @@ async def make_api_delete(url, api_key, params=None):
         headers = {'X-Api-Key': api_key}
         response = await asyncio.get_event_loop().run_in_executor(None, lambda: requests.delete(url, params=params, headers=headers))
         response.raise_for_status()
+        logging.info(f'Sucessfully removed {url}')
         return response.json()
     except RequestException as e:
         logging.error(f'Error making API request to {url}: {e}')
@@ -63,9 +68,9 @@ async def remove_stalled_sonarr_downloads():
         logging.info('Processing Sonarr queue...')
         for item in sonarr_queue['records']:
             if 'title' in item and 'status' in item and 'trackedDownloadStatus' in item:
-                logging.info(f'Checking the status of {item["title"]}')
-                if item['status'] == 'warning' and item['errorMessage'] == 'The download is stalled with no connections':
-                    logging.info(f'Removing stalled Sonarr download: {item["title"]}')
+                logging.info(f'\n\nChecking the status of {item["title"]} {item["status"]}')
+                if any(msg in item.get('errorMessage', 'n/a') for msg in MESSAGES_TO_CHECK) or any(msg in statusMsg for statusMsgObj in item.get('statusMessages', []) for statusMsg in statusMsgObj.get('messages', []) for msg in MESSAGES_TO_CHECK):
+                    logging.info(f'Removing Sonarr download: {item["title"]} with error message {item.get("errorMessage", "no error")}')
                     await make_api_delete(f'{SONARR_API_URL}/queue/{item["id"]}', SONARR_API_KEY, {'removeFromClient': 'true', 'blocklist': 'true'})
             else:
                 logging.warning('Skipping item in Sonarr queue due to missing or invalid keys')
@@ -81,9 +86,9 @@ async def remove_stalled_radarr_downloads():
         logging.info('Processing Radarr queue...')
         for item in radarr_queue['records']:
             if 'title' in item and 'status' in item and 'trackedDownloadStatus' in item:
-                logging.info(f'Checking the status of {item["title"]}')
-                if item['status'] == 'warning' and item['errorMessage'] == 'The download is stalled with no connections':
-                    logging.info(f'Removing stalled Radarr download: {item["title"]}')
+                logging.info(f'\n\nChecking the status of {item["title"]}')
+                if any(msg in item.get('errorMessage', 'n/a') for msg in MESSAGES_TO_CHECK) or any(msg in statusMsg for statusMsgObj in item.get('statusMessages', []) for statusMsg in statusMsgObj.get('messages', []) for msg in MESSAGES_TO_CHECK): 
+                    logging.info(f'Removing Radarr download: {item["title"]} with error message {item.get("errorMessage", "no error")}')
                     await make_api_delete(f'{RADARR_API_URL}/queue/{item["id"]}', RADARR_API_KEY, {'removeFromClient': 'true', 'blocklist': 'true'})
             else:
                 logging.warning('Skipping item in Radarr queue due to missing or invalid keys')
