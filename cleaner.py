@@ -51,6 +51,8 @@ async def make_api_delete(url, api_key, params=None):
         response = await asyncio.get_event_loop().run_in_executor(None, lambda: requests.delete(url, params=params, headers=headers))
         response.raise_for_status()
         logging.info(f'Sucessfully removed {url}')
+        if response.headers.get('content-length') and int(response.headers['content-length']) == 0:
+            return {}
         return response.json()
     except RequestException as e:
         logging.error(f'Error making API request to {url}: {e}')
